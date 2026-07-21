@@ -1,0 +1,16 @@
+services:
+  coding-execution-gateway:
+    build: .
+    container_name: coding-execution-gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - coding-internal
+
+networks:
+  coding-internal:
+    external: true
+    name: coding-internal
