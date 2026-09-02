@@ -52,6 +52,12 @@ class Settings:
     max_output_chars: int = int(os.getenv("CODING_MAX_OUTPUT_CHARS", "20000") or "20000")
     default_time_limit_ms: int = int(os.getenv("CODING_DEFAULT_TIME_LIMIT_MS", "3000") or "3000")
     default_memory_limit_mb: int = int(os.getenv("CODING_DEFAULT_MEMORY_LIMIT_MB", "256") or "256")
+    jvm_min_memory_limit_mb: int = int(os.getenv("CODING_JVM_MIN_MEMORY_LIMIT_MB", "500") or "500")
+    dotnet_min_memory_limit_mb: int = int(os.getenv("CODING_DOTNET_MIN_MEMORY_LIMIT_MB", "256") or "256")
+    enable_per_process_and_thread_memory_limit: bool = _bool_env(
+        "JUDGE0_ENABLE_PER_PROCESS_AND_THREAD_MEMORY_LIMIT",
+        True,
+    )
     enable_network: bool = _bool_env("JUDGE0_ENABLE_NETWORK", False)
     use_batch_api: bool = _bool_env("JUDGE0_USE_BATCH_API", True)
 

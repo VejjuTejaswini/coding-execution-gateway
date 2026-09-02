@@ -26,6 +26,18 @@ _STATUS_MAP = {
     14: "infrastructure_error",
 }
 
+_JVM_LANGUAGES = frozenset({"java", "kotlin", "scala"})
+_DOTNET_LANGUAGES = frozenset({"csharp"})
+_DEFAULT_JVM_MIN_MEMORY_MB = 500
+_DEFAULT_DOTNET_MIN_MEMORY_MB = 256
+_JVM_INFRASTRUCTURE_MARKERS = (
+    "error occurred during initialization of vm",
+    "could not reserve enough space",
+    "could not create the java virtual machine",
+    "native memory allocation",
+    "os::commit_memory",
+)
+
 
 class ExecutionService:
     def __init__(self, settings: Settings, registry: LanguageRegistry):
@@ -36,6 +48,52 @@ class ExecutionService:
     @staticmethod
     def _text(value: Any) -> str:
         return "" if value is None else str(value)
+
+    def _resolve_memory_limit_mb(
+        self,
+        *,
+        canonical_language: str,
+        requested_memory_mb: int | None,
+    ) -> int:
+        requested = max(
+            16,
+            int(requested_memory_mb or self.settings.default_memory_limit_mb),
+        )
+
+        if canonical_language in _JVM_LANGUAGES:
+            jvm_min_memory_mb = int(
+                getattr(
+                    self.settings,
+                    "jvm_min_memory_limit_mb",
+                    _DEFAULT_JVM_MIN_MEMORY_MB,
+                )
+            )
+            return max(requested, jvm_min_memory_mb)
+
+        if canonical_language in _DOTNET_LANGUAGES:
+            dotnet_min_memory_mb = int(
+                getattr(
+                    self.settings,
+                    "dotnet_min_memory_limit_mb",
+                    _DEFAULT_DOTNET_MIN_MEMORY_MB,
+                )
+            )
+            return max(requested, dotnet_min_memory_mb)
+
+        return requested
+
+    @staticmethod
+    def _is_runtime_infrastructure_failure(
+        *,
+        canonical_language: str,
+        stderr: str,
+        compile_output: str,
+    ) -> bool:
+        if canonical_language not in _JVM_LANGUAGES:
+            return False
+
+        text = f"{stderr} {compile_output}".lower()
+        return any(marker in text for marker in _JVM_INFRASTRUCTURE_MARKERS)
 
     async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
         if request.execution_mode != "stdin_stdout":
@@ -92,13 +150,19 @@ class ExecutionService:
                 ]
                 test_stdins = ["" for _ in request.tests]
 
+            effective_memory_limit_mb = self._resolve_memory_limit_mb(
+                canonical_language=runtime.canonical_language,
+                requested_memory_mb=request.memory_limit_mb,
+            )
+
             raw_results = await self.judge0.execute_many(
                 language_id=runtime.judge0_language_id,
                 source_code=source_code,
                 source_codes=source_codes,
                 stdins=test_stdins,
                 time_limit_ms=max(100, request.time_limit_ms or self.settings.default_time_limit_ms),
-                memory_limit_mb=max(16, request.memory_limit_mb or self.settings.default_memory_limit_mb),
+                memory_limit_mb=effective_memory_limit_mb,
+                force_sequential=runtime.canonical_language in _JVM_LANGUAGES,
             )
         except httpx.TimeoutException as exc:
             return ExecuteResponse(
@@ -139,6 +203,13 @@ class ExecutionService:
             stdout = self._text(result.get("stdout"))[: self.settings.max_output_chars]
             stderr = self._text(result.get("stderr") or result.get("message"))[: self.settings.max_output_chars]
             compile_output = self._text(result.get("compile_output"))[: self.settings.max_output_chars]
+            if self._is_runtime_infrastructure_failure(
+                canonical_language=runtime.canonical_language,
+                stderr=stderr,
+                compile_output=compile_output,
+            ):
+                normalized_status = "infrastructure_error"
+
             execution_time_ms = int(float(result.get("time") or 0) * 1000)
             memory_kb = float(result.get("memory") or 0)
 

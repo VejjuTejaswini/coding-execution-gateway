@@ -35,6 +35,17 @@ class Judge0Client:
             "cpu_time_limit": cpu_seconds,
             "wall_time_limit": max(cpu_seconds + 2.0, cpu_seconds * 2.0),
             "memory_limit": max(16, memory_limit_mb) * 1024,
+            # Keep per-process memory accounting enabled for the current
+            # Judge0 deployment. Its cgroup mode is not compatible with the
+            # host's cgroup-v2 setup. Older gateway Settings objects do not
+            # define this option, so default safely to True.
+            "enable_per_process_and_thread_memory_limit": bool(
+                getattr(
+                    self.settings,
+                    "enable_per_process_and_thread_memory_limit",
+                    True,
+                )
+            ),
             "max_file_size": 2048,
             "enable_network": self.settings.enable_network,
         }
@@ -48,6 +59,7 @@ class Judge0Client:
         source_codes: list[str] | None = None,
         time_limit_ms: int,
         memory_limit_mb: int,
+        force_sequential: bool = False,
     ) -> list[dict[str, Any]]:
         if not stdins:
             return []
@@ -67,7 +79,7 @@ class Judge0Client:
             for current_source, stdin in zip(effective_sources, stdins)
         ]
 
-        if self.settings.use_batch_api and len(submissions) > 1:
+        if not force_sequential and self.settings.use_batch_api and len(submissions) > 1:
             try:
                 return await self._execute_batch(submissions)
             except (httpx.HTTPError, ValueError, KeyError):
